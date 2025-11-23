@@ -1,0 +1,423 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#111827" />
+    <title>xboom</title>
+    <link rel="manifest" href="/manifest.json" />
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap');
+      body {
+        font-family: 'Cairo', sans-serif;
+        overscroll-behavior-y: none; /* Prevent pull-to-refresh on mobile */
+        -webkit-font-smoothing: antialiased;
+      }
+      
+      /* Performance Optimization: Hardware Acceleration */
+      .gpu-accelerated {
+        transform: translateZ(0);
+        backface-visibility: hidden;
+        perspective: 1000px;
+      }
+
+      /* Optimization: Remove expensive blur on low-end/mobile or generally for speed */
+      .backdrop-blur-sm, .backdrop-blur-md, .backdrop-blur-xl {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background-color: rgba(17, 24, 39, 0.9) !important; /* Fallback solid/semi-transparent color */
+      }
+
+      .perspective-1000 {
+        perspective: 1000px;
+      }
+      .transform-style-3d {
+        transform-style: preserve-3d;
+      }
+      .backface-hidden {
+        backface-visibility: hidden;
+      }
+      .game-container-animation {
+        animation: fadeIn 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+        will-change: opacity, transform;
+      }
+
+      @keyframes fadeIn {
+        0% {
+          opacity: 0;
+          transform: scale(0.98) translateY(10px);
+        }
+        100% {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+      
+      @keyframes banner-enter {
+        from { transform: translateY(-100%); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+      }
+      @keyframes banner-exit {
+        from { transform: translateY(0); opacity: 1; }
+        to { transform: translateY(-100%); opacity: 0; }
+      }
+      .animate-banner-enter {
+        animation: banner-enter 0.5s ease-out both;
+      }
+      .animate-banner-exit {
+        animation: banner-exit 0.5s ease-in both;
+      }
+
+      .marquee {
+        overflow: hidden;
+        white-space: nowrap;
+        box-sizing: border-box;
+      }
+
+      .marquee-content {
+        display: inline-block;
+        padding-left: 100%;
+        animation: marquee 80s linear infinite;
+        will-change: transform;
+      }
+      
+      .marquee-content:hover, .marquee-content-reversed:hover {
+        animation-play-state: paused;
+      }
+
+      @keyframes marquee {
+        0% {
+          transform: translateX(0);
+        }
+        100% {
+          transform: translateX(-100%);
+        }
+      }
+
+      .marquee-content-reversed {
+        display: inline-block;
+        padding-right: 100%;
+        animation: marquee-reversed 80s linear infinite;
+        will-change: transform;
+      }
+
+      @keyframes marquee-reversed {
+        0% {
+          transform: translateX(0);
+        }
+        100% {
+          transform: translateX(100%);
+        }
+      }
+
+      @keyframes marquee-once {
+        from {
+          transform: translateX(100%);
+        }
+        to {
+          transform: translateX(-100%);
+        }
+      }
+
+      .marquee-content-once {
+        display: inline-block;
+        padding-left: 100%;
+        animation: marquee-once 15s linear forwards;
+        white-space: nowrap;
+        will-change: transform;
+      }
+
+      @keyframes progress-bar {
+        from { width: 100%; }
+        to { width: 0%; }
+      }
+      
+      @keyframes progress-bar-stripes {
+        from { background-position-x: 40px; }
+        to { background-position-x: 0; }
+      }
+      
+      @keyframes progress-indeterminate {
+        0% {
+          transform: translateX(-100%) scaleX(0.1);
+        }
+        50% {
+          transform: translateX(0) scaleX(1);
+        }
+        100% {
+          transform: translateX(100%) scaleX(0.1);
+        }
+      }
+      .animate-progress-indeterminate {
+        animation: progress-indeterminate 1.5s ease-in-out infinite;
+      }
+
+      @keyframes confetti-fall {
+        0% {
+          transform: translateY(-20%) rotateZ(0deg);
+          opacity: 1;
+        }
+        100% {
+          transform: translateY(110vh) rotateZ(720deg);
+          opacity: 0;
+        }
+      }
+
+      .progress-bar--striped {
+        background-image: linear-gradient(
+          45deg,
+          rgba(255, 255, 255, 0.15) 25%,
+          transparent 25%,
+          transparent 50%,
+          rgba(255, 255, 255, 0.15) 50%,
+          rgba(255, 255, 255, 0.15) 75%,
+          transparent 75%,
+          transparent
+        );
+        background-size: 40px 40px;
+        box-shadow: 0 0 10px 1px currentColor, inset 0 1px 2px rgba(0,0,0,0.4);
+        height: 10px;
+        border-radius: 5px;
+      }
+
+      @keyframes subtle-glow {
+        0%, 100% {
+          box-shadow: 0 0 10px 0px rgba(0, 220, 255, 0.3), 0 0 20px 0px rgba(0, 220, 255, 0.2);
+        }
+        50% {
+          box-shadow: 0 0 20px 3px rgba(0, 220, 255, 0.5), 0 0 40px 3px rgba(0, 220, 255, 0.3);
+        }
+      }
+      .banner-glow {
+        animation: subtle-glow 5s ease-in-out infinite;
+      }
+
+      .ease-out-quint {
+        transition-timing-function: cubic-bezier(0.3, 0, 0.1, 1);
+      }
+       .nickname-gold {
+        background-image: linear-gradient(to right, #BF953F, #FCF6BA, #B38728);
+        -webkit-background-clip: text;
+        -moz-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        font-weight: 700;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+    }
+
+    @keyframes loading-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .loading-screen-fade-in {
+      animation: loading-fade-in 0.5s ease-out forwards;
+    }
+    @keyframes loading-fade-out {
+      from { opacity: 1; }
+      to { opacity: 0; }
+    }
+    .loading-screen-fade-out {
+      animation: loading-fade-out 0.5s ease-in forwards;
+    }
+
+    @keyframes shine {
+      0% { background-position: 200% center; }
+      100% { background-position: -200% center; }
+    }
+    .animate-shine {
+      background-size: 300% auto;
+      animation: shine 3s linear infinite;
+    }
+
+    /* Coin Flip Animation */
+    .coin-container {
+      width: 150px;
+      height: 150px;
+      perspective: 1000px;
+    }
+
+    .coin {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      transform-style: preserve-3d;
+      transition: transform 1.2s cubic-bezier(0.6, -0.28, 0.735, 0.045);
+    }
+
+    .coin.flipping-king {
+      transform: rotateY(1800deg); /* 5 full spins, ends on king */
+    }
+
+    .coin.flipping-writing {
+      transform: rotateY(1980deg); /* 5.5 spins, ends on writing */
+    }
+
+    .coin-face {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      backface-visibility: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 5rem;
+      border-radius: 50%;
+      background-image: radial-gradient(circle, #fde047, #facc15, #eab308);
+      box-shadow: 0 0 20px #facc15, inset 0 0 10px rgba(0,0,0,0.3);
+    }
+
+    .coin-face-front { /* King */
+      transform: rotateY(0deg);
+    }
+
+    .coin-face-back { /* Writing */
+      transform: rotateY(180deg);
+    }
+
+    /* Responsive Game Styles */
+    .game-container {
+      width: 90vw;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 10px;
+    }
+    .game-board {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1 / 1;
+    }
+    .game-item {
+      width: 22vw;
+      max-width: 120px;
+      height: auto;
+    }
+    .game-text {
+      font-size: 4vw;
+    }
+    @media (max-width: 600px) {
+      .game-item {
+        width: 24vw;
+      }
+      .game-text {
+        font-size: 4.5vw;
+      }
+    }
+    @media (min-width: 601px) and (max-width: 1024px) {
+      .game-item {
+        width: 18vw;
+      }
+      .game-text {
+        font-size: 3vw;
+      }
+    }
+    @media (min-width: 1025px) {
+      .game-container {
+        width: 600px;
+      }
+      .game-text {
+        font-size: 20px;
+      }
+    }
+
+    @keyframes float-icon {
+      0%, 100% {
+        transform: translateY(0px) rotate(0deg);
+        opacity: 0.7;
+      }
+      50% {
+        transform: translateY(-15px) rotate(10deg);
+        opacity: 1;
+      }
+    }
+
+    /* --- GOLD LOGO STYLES --- */
+    @keyframes gold-shimmer {
+        0% { background-position: -200% center; }
+        100% { background-position: 200% center; }
+    }
+
+    @keyframes gentle-float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-4px); }
+    }
+
+    .xboom-gold-logo {
+        background: linear-gradient(
+            to right,
+            #BF953F 0%,
+            #FCF6BA 25%,
+            #B38728 50%,
+            #FBF5B7 75%,
+            #AA771C 100%
+        );
+        background-size: 200% auto;
+        color: #000; /* Fallback */
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: gold-shimmer 3s linear infinite, gentle-float 4s ease-in-out infinite;
+        filter: drop-shadow(0 0 6px rgba(212, 175, 55, 0.6));
+        display: inline-block;
+        font-weight: 900;
+    }
+
+    .eagle-gold-glow {
+        display: inline-block;
+        filter: drop-shadow(0 0 15px rgba(255, 215, 0, 0.8)) brightness(1.1);
+        animation: gentle-float 4s ease-in-out infinite reverse;
+    }
+
+    /* --- INPUT FIELD GOLD BORDERS --- */
+    .input-gold-border {
+        border: 2px solid transparent;
+        border-radius: 0.5rem;
+        /* Inner background matches bg-gray-900 (#111827) */
+        background-image: linear-gradient(#111827, #111827), 
+                          linear-gradient(to right, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%);
+        background-origin: border-box;
+        background-clip: padding-box, border-box;
+        background-size: 100% 100%, 200% auto;
+        animation: gold-shimmer 3s linear infinite;
+        transition: box-shadow 0.3s ease;
+    }
+    
+    .input-gold-border:focus {
+        outline: none;
+        box-shadow: 0 0 15px rgba(191, 149, 63, 0.4);
+    }
+    /* ----------------------- */
+    </style>
+    <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "firebase/app": "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
+    "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js",
+    "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js",
+    "firebase/storage": "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^0.20.0",
+    "firebase/": "https://aistudiocdn.com/firebase@^12.5.0/",
+    "framer-motion": "https://aistudiocdn.com/framer-motion@^11.2.12"
+  }
+}
+</script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {}
+        }
+      }
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-gray-900 text-white">
+    <noscript>تحتاج إلى تمكين جافا سكريبت لتشغيل هذا التطبيق.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

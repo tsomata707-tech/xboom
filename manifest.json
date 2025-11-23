@@ -1,0 +1,22 @@
+{
+  "short_name": "xboom",
+  "name": "xboom - ألعاب ومرح",
+  "lang": "ar",
+  "description": "موقع ألعاب ترفيهي يضم مجموعة من الألعاب الممتعة. استخدم 💎 الافتراضية وجرب حظك!",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#111827",
+  "background_color": "#111827"
+}
