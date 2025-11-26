@@ -5,7 +5,6 @@ import { useToast } from '../../AuthGate';
 import BetControls from '../BetControls';
 import Confetti from '../Confetti';
 import { formatNumber } from '../utils/formatNumber';
-import HowToPlay from '../HowToPlay';
 import { useGameLoop } from '../hooks/useGameLoop';
 import GameTimerDisplay from '../GameTimerDisplay';
 
@@ -97,14 +96,6 @@ const FindTheBoxGame: React.FC<FindTheBoxGameProps> = ({ userProfile, onBalanceU
         <div className="flex flex-col items-center justify-between h-full p-4 relative">
             {showConfetti && <Confetti onComplete={() => {}} />}
             
-            <HowToPlay>
-                 <p>1. حدد مبلغ الرهان.</p>
-                 <p>2. اختر أحد الصناديق الثلاثة (🎁).</p>
-                 <p>3. انتظر كشف النتائج.</p>
-                 <p>4. هناك جائزة (💎) مخبأة في صندوق واحد فقط.</p>
-                 <p>5. إذا كان اختيارك صحيحاً، ستربح 3 أضعاف رهانك!</p>
-            </HowToPlay>
-
             <GameTimerDisplay phase={phase} timeRemaining={timeRemaining} totalTime={totalTime} />
 
             <div className="flex-grow w-full flex items-center justify-center my-4">

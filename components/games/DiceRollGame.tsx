@@ -1,11 +1,12 @@
 
-import React, { useState, useCallback } from 'react';
-import type { AppUser, GameId } from '../../types';
+import React, { useState, useEffect } from 'react';
+import { doc, onSnapshot, runTransaction } from 'firebase/firestore';
+import { db } from '../../firebase';
+import type { AppUser, GameId, DiceRollGameState } from '../../types';
 import { useToast } from '../../AuthGate';
 import BetControls from '../BetControls';
 import Confetti from '../Confetti';
-import { formatNumber } from '../utils/formatNumber';
-import HowToPlay from '../HowToPlay';
+import { convertTimestamps } from '../utils/convertTimestamps';
 
 interface UserProfile extends AppUser {
     balance: number;
@@ -17,114 +18,100 @@ interface DiceRollGameProps {
     onAnnounceWin: (nickname: string, amount: number, gameName: GameId) => void;
 }
 
-const DICE_FACES: { [key: number]: string } = {
-    1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅'
-};
-
-const WIN_MULTIPLIER = 5;
+const DICE_FACES: { [key: number]: string } = { 1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅' };
 
 const DiceRollGame: React.FC<DiceRollGameProps> = ({ userProfile, onBalanceUpdate, onAnnounceWin }) => {
     const { addToast } = useToast();
+    const [gameState, setGameState] = useState<DiceRollGameState | null>(null);
     const [bet, setBet] = useState(100);
     const [selectedNumber, setSelectedNumber] = useState<number | null>(null);
-    const [diceResult, setDiceResult] = useState<number>(1);
-    const [isRolling, setIsRolling] = useState(false);
-    const [resultMessage, setResultMessage] = useState<React.ReactNode | null>(null);
+    const [hasBet, setHasBet] = useState(false);
+    const [displayDice, setDisplayDice] = useState(1);
     const [showConfetti, setShowConfetti] = useState(false);
+    const [winMessage, setWinMessage] = useState<string>('');
 
-    const handleRoll = async () => {
-        if (isRolling) return;
-        if (selectedNumber === null) {
-            addToast('الرجاء اختيار رقم للمراهنة عليه.', 'info');
-            return;
-        }
-        if (!userProfile || bet <= 0 || bet > userProfile.balance) {
-            addToast('الرهان غير صالح أو رصيدك غير كافٍ.', 'error');
-            return;
-        }
+    useEffect(() => {
+        const unsubscribe = onSnapshot(doc(db, 'public', 'diceRoll'), (docSnap) => {
+            if (docSnap.exists()) {
+                const data = convertTimestamps(docSnap.data()) as DiceRollGameState;
+                setGameState(data);
 
-        setIsRolling(true);
-        setResultMessage(null);
-        setShowConfetti(false);
+                if (data.status === 'betting') {
+                    setHasBet(false);
+                    setSelectedNumber(null);
+                    setWinMessage('');
+                    setShowConfetti(false);
+                } else if (data.status === 'rolling') {
+                    // Animation
+                    const interval = setInterval(() => setDisplayDice(Math.ceil(Math.random() * 6)), 100);
+                    setTimeout(() => { clearInterval(interval); if(data.result) setDisplayDice(data.result); }, 3000);
+                } else if (data.status === 'result') {
+                    setDisplayDice(data.result || 1);
+                    if (hasBet && selectedNumber === data.result) {
+                        setWinMessage(`مبروك! ظهر الرقم ${data.result}`);
+                        setShowConfetti(true);
+                        // Win amount is handled by server engine, but we can show UI feedback
+                    } else if (hasBet) {
+                        setWinMessage(`خسارة. الرقم كان ${data.result}`);
+                    }
+                }
+            }
+        });
+        return () => unsubscribe();
+    }, [hasBet, selectedNumber]);
+
+    const handleBet = async () => {
+        if (!selectedNumber || !userProfile || !gameState) return;
+        if (gameState.status !== 'betting') return;
+        
         const success = await onBalanceUpdate(-bet, 'diceRoll');
-        if (!success) {
-            setIsRolling(false);
-            return;
+        if (success) {
+            setHasBet(true);
+            await runTransaction(db, async (t) => {
+                const ref = doc(db, 'public', 'diceRoll');
+                const s = await t.get(ref);
+                const d = s.data() as DiceRollGameState;
+                const bets = d.bets || {};
+                bets[userProfile.uid] = { userId: userProfile.uid, nickname: userProfile.displayName || 'User', amount: bet, choice: selectedNumber, timestamp: Date.now(), avatar: '' };
+                t.update(ref, { bets });
+            });
+            addToast('تم الرهان!', 'success');
         }
-
-        // Animation
-        let rollCount = 0;
-        const rollInterval = setInterval(() => {
-            setDiceResult(Math.floor(Math.random() * 6) + 1);
-            rollCount++;
-            if (rollCount > 15) {
-                clearInterval(rollInterval);
-                finishRoll();
-            }
-        }, 100);
-
-        const finishRoll = () => {
-            const finalResult = Math.floor(Math.random() * 6) + 1;
-            setDiceResult(finalResult);
-
-            if (finalResult === selectedNumber) {
-                const winnings = bet * WIN_MULTIPLIER;
-                onBalanceUpdate(winnings, 'diceRoll');
-                setResultMessage(<span className="text-green-400">🎉 لقد ربحت {formatNumber(winnings)} 💎!</span>);
-                if (winnings > 10000 && userProfile.displayName) {
-                    onAnnounceWin(userProfile.displayName, winnings, 'diceRoll');
-                }
-                if (winnings > bet * 10) {
-                    setShowConfetti(true);
-                }
-            } else {
-                setResultMessage(<span className="text-red-500">خسرت! كان الرقم {finalResult}.</span>);
-            }
-            setIsRolling(false);
-        };
     };
 
     return (
         <div className="flex flex-col items-center justify-around h-full p-4 relative">
             {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
             
-            <HowToPlay>
-                <p>1. حدد مبلغ الرهان.</p>
-                <p>2. اختر رقماً واحداً من 1 إلى 6 تتوقع ظهوره.</p>
-                <p>3. اضغط على زر <strong>"ارمِ النرد!"</strong>.</p>
-                <p>4. إذا ظهر الرقم الذي اخترته، تفوز بـ 5 أضعاف رهانك!</p>
-            </HowToPlay>
-
-            <div className="my-8 text-8xl sm:text-9xl text-white transition-transform duration-100" style={{ transform: isRolling ? `rotate(${Math.random() * 360}deg) scale(0.9)` : '' }}>
-                {DICE_FACES[diceResult]}
+            <div className="text-center">
+                <p className={`font-bold ${gameState?.status === 'betting' ? 'text-green-400' : 'text-red-400'}`}>
+                    {gameState?.status === 'betting' ? 'اختر رقماً' : 'النتيجة...'}
+                </p>
             </div>
 
-            <div className="h-10 text-xl font-bold text-center game-container-animation">
-                {resultMessage}
+            <div className="text-9xl text-white transition-transform duration-100">
+                {DICE_FACES[displayDice]}
             </div>
+
+            <div className="h-8 text-xl font-bold text-center">{winMessage}</div>
             
-            <div className="w-full max-w-lg flex flex-col items-center gap-4">
-                <p className="font-bold text-gray-300">اختر رقمًا:</p>
-                <div className="grid grid-cols-6 gap-2 sm:gap-4 w-full">
-                    {[1, 2, 3, 4, 5, 6].map(num => (
-                        <button
-                            key={num}
-                            onClick={() => setSelectedNumber(num)}
-                            disabled={isRolling}
-                            className={`aspect-square text-2xl sm:text-3xl font-bold rounded-lg border-4 transition-all duration-300
-                            ${selectedNumber === num ? 'border-yellow-400 bg-yellow-400/20 scale-110' : 'border-gray-600 bg-gray-700'}
-                            disabled:opacity-50 disabled:cursor-not-allowed`}
-                        >
-                            {DICE_FACES[num]}
-                        </button>
-                    ))}
-                </div>
+            <div className="grid grid-cols-6 gap-2 w-full max-w-lg">
+                {[1, 2, 3, 4, 5, 6].map(num => (
+                    <button
+                        key={num}
+                        onClick={() => setSelectedNumber(num)}
+                        disabled={gameState?.status !== 'betting' || hasBet}
+                        className={`aspect-square text-3xl rounded-lg border-4 transition-all ${selectedNumber === num ? 'border-yellow-400 bg-yellow-900/50' : 'border-gray-600 bg-gray-800'} disabled:opacity-50`}
+                    >
+                        {DICE_FACES[num]}
+                    </button>
+                ))}
             </div>
 
-            <div className="w-full max-w-sm flex flex-col items-center gap-4 mt-6">
-                <BetControls bet={bet} setBet={setBet} balance={userProfile?.balance ?? 0} disabled={isRolling} />
-                <button onClick={handleRoll} disabled={isRolling} className="w-full py-4 mt-4 text-2xl font-bold bg-gradient-to-r from-purple-600 to-cyan-600 rounded-lg text-white hover:opacity-90 transition transform hover:scale-105 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-wait">
-                    {isRolling ? 'جاري الرمي...' : 'ارمِ النرد!'}
+            <div className="w-full max-w-sm mt-4">
+                <BetControls bet={bet} setBet={setBet} balance={userProfile?.balance ?? 0} disabled={gameState?.status !== 'betting' || hasBet} />
+                <button onClick={handleBet} disabled={gameState?.status !== 'betting' || hasBet || !selectedNumber} className="w-full py-3 mt-4 text-xl font-bold bg-blue-600 rounded-lg text-white disabled:opacity-50">
+                    {hasBet ? 'انتظر النتيجة...' : 'تأكيد الرهان'}
                 </button>
             </div>
         </div>

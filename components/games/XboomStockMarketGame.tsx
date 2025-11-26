@@ -1,262 +1,302 @@
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import type { AppUser, GameId } from '../../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { doc, onSnapshot, runTransaction } from 'firebase/firestore';
+import { db } from '../../firebase';
+import type { AppUser, GameId, StockMarketGameState } from '../../types';
 import { useToast } from '../../AuthGate';
-import { useGameLoop } from '../hooks/useGameLoop';
+import BetControls from '../BetControls';
+import { convertTimestamps } from '../utils/convertTimestamps';
 import { formatNumber } from '../utils/formatNumber';
-import Confetti from '../Confetti';
-import DiamondIcon from '../icons/DiamondIcon';
-import HowToPlay from '../HowToPlay';
 
-interface UserProfile extends AppUser {
-    balance: number;
-}
+interface UserProfile extends AppUser { balance: number; }
+interface Props { userProfile: UserProfile | null; onBalanceUpdate: (amount: number, gameId: GameId) => Promise<boolean>; onAnnounceWin: any; }
 
-interface XboomStockMarketGameProps {
-    userProfile: UserProfile | null;
-    onBalanceUpdate: (amount: number, gameId: GameId) => Promise<boolean>;
-    onAnnounceWin: (nickname: string, amount: number, gameName: GameId) => void;
-}
-
-// Game Config
-type BetDirection = 'up' | 'down';
-type Bet = { commodityId: string; direction: BetDirection; amount: number };
-type Result = { [commodityId: string]: 'win' | 'loss' };
-
+// Extended Commodities List (10 Items)
 const COMMODITIES = [
     { id: 'gold', name: 'ذهب', icon: '🥇' },
     { id: 'oil', name: 'نفط', icon: '🛢️' },
-    { id: 'silver', name: 'فضة', icon: '🥈' },
     { id: 'btc', name: 'بيتكوين', icon: '₿' },
     { id: 'eth', name: 'إيثريوم', icon: 'Ξ' },
     { id: 'usd', name: 'دولار', icon: '💵' },
-    { id: 'apple', name: 'أسهم أبل', icon: '🍏' },
-    { id: 'tesla', name: 'أسهم تسلا', icon: '🚗' },
-    { id: 'coffee', name: 'قهوة', icon: '☕' },
-    { id: 'wheat', name: 'قمح', icon: '🌾' },
-    { id: 'gas', name: 'غاز', icon: '💨' },
-    { id: 'sp500', name: 'مؤشر S&P', icon: '📊' },
+    { id: 'silver', name: 'فضة', icon: '🥈' },
+    { id: 'gas', name: 'غاز', icon: '🔥' },
+    { id: 'aapl', name: 'أبل', icon: '🍎' },
+    { id: 'tsla', name: 'تسلا', icon: '🚗' },
+    { id: 'eur', name: 'يورو', icon: '💶' },
 ];
 
-const WIN_MULTIPLIER = 1.95;
-const PREPARATION_TIME = 10;
-const GAME_TIME = 10;
-const RESULTS_TIME = 5;
-const QUICK_BETS = [25, 100, 500, 1000];
-
-// Chart Component
-const MiniChart: React.FC<{ running: boolean; result?: 'win' | 'loss' }> = ({ running, result }) => {
-    const [points, setPoints] = useState('0,50 10,50 20,50 30,50 40,50 50,50 60,50 70,50 80,50 90,50 100,50');
-
+const MarketSimulator: React.FC = () => {
+    const [price, setPrice] = useState(12450.50);
+    const [change, setChange] = useState(0.5);
+    
     useEffect(() => {
-        if (running) {
-            let y = 50;
-            const newPoints = Array.from({ length: 11 }, (_, i) => {
-                const change = (Math.random() - 0.5) * 20;
-                y = Math.max(10, Math.min(90, y + change));
-                return `${i * 10},${y}`;
-            });
-            setPoints(newPoints.join(' '));
-        } else if (!running && !result) {
-            setPoints('0,50 10,50 20,50 30,50 40,50 50,50 60,50 70,50 80,50 90,50 100,50');
-        }
-    }, [running, result]);
+        const interval = setInterval(() => {
+            const volatility = (Math.random() - 0.5) * 50;
+            setPrice(p => Math.max(1000, p + volatility));
+            setChange(volatility);
+        }, 1000);
+        return () => clearInterval(interval);
+    }, []);
 
-    const finalColor = result === 'win' ? 'stroke-green-400' : 'stroke-red-500';
+    const isUp = change >= 0;
 
     return (
-        <svg viewBox="0 0 100 100" className="w-full h-16">
-            <polyline
-                fill="none"
-                strokeWidth="4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={points}
-                className={`transition-all duration-300 ${result ? finalColor : 'stroke-gray-500'}`}
-                style={{
-                    strokeDasharray: running ? '500' : '0',
-                    strokeDashoffset: running ? '500' : '0',
-                    animation: running ? 'dash 10s linear forwards' : 'none'
-                }}
-            />
-             <style>{`
-                @keyframes dash {
-                    to {
-                        stroke-dashoffset: 0;
-                    }
-                }
-            `}</style>
-        </svg>
+        <div className="w-full bg-gray-900 rounded-lg p-3 mb-4 border-2 border-gray-700 flex items-center justify-between shadow-[0_0_15px_rgba(0,0,0,0.5)] overflow-hidden relative">
+            {/* Moving Graph Line Effect */}
+            <div className="absolute inset-0 opacity-10 flex items-center">
+                 <div className="w-full h-1 bg-green-500 animate-pulse"></div>
+            </div>
+            
+            <div className="flex items-center gap-3 z-10">
+                <div className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-xl">📊</div>
+                <div>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">MARKET INDEX</p>
+                    <p className="text-xl font-mono font-black text-white">{price.toFixed(2)}</p>
+                </div>
+            </div>
+            
+            <div className={`text-right z-10 ${isUp ? 'text-green-400' : 'text-red-400'}`}>
+                <p className="text-lg font-bold">{isUp ? '▲' : '▼'} {Math.abs(change).toFixed(2)}</p>
+                <p className="text-xs opacity-80">{isUp ? '+0.4%' : '-0.2%'}</p>
+            </div>
+        </div>
     );
 };
 
-const XboomStockMarketGame: React.FC<XboomStockMarketGameProps> = ({ userProfile, onBalanceUpdate, onAnnounceWin }) => {
+const XboomStockMarketGame: React.FC<Props> = ({ userProfile, onBalanceUpdate, onAnnounceWin }) => {
     const { addToast } = useToast();
-    const [bets, setBets] = useState<Bet[]>([]);
-    const [betAmount, setBetAmount] = useState(100);
-    const [results, setResults] = useState<Result>({});
-    const [totalWinnings, setTotalWinnings] = useState(0);
+    const [gameState, setGameState] = useState<StockMarketGameState | null>(null);
+    const [bet, setBet] = useState(100);
+    
+    // Track bets per item: { 'gold': { direction: 'up', amount: 100 }, ... }
+    const [userBets, setUserBets] = useState<Record<string, { direction: 'up' | 'down', amount: number }>>({});
+    const [payoutProcessed, setPayoutProcessed] = useState(false);
+    const lastRoundId = useRef<number | string>('');
 
-    const totalBet = useMemo(() => bets.reduce((sum, bet) => sum + bet.amount, 0), [bets]);
+    useEffect(() => {
+        const unsub = onSnapshot(doc(db, 'public', 'stockMarket'), (s) => {
+            if (s.exists()) {
+                const data = convertTimestamps(s.data()) as StockMarketGameState;
+                setGameState(data);
+            }
+        });
+        return () => unsub();
+    }, []);
 
-    const handleRoundStart = useCallback(async () => {
-        if (totalBet === 0) return;
-        if (!userProfile || totalBet > userProfile.balance) {
-            addToast('رصيدك غير كافٍ لإتمام الرهانات.', 'error');
+    // Game Loop & Payout Logic
+    useEffect(() => {
+        if (!gameState) return;
+
+        // 1. Reset on New Round
+        if (gameState.roundId !== lastRoundId.current) {
+            lastRoundId.current = gameState.roundId;
+            if (gameState.status === 'betting') {
+                setUserBets({});
+                setPayoutProcessed(false);
+            }
+        }
+
+        // 2. Handle Results
+        if (gameState.status === 'result' && gameState.results && !payoutProcessed) {
+            let totalWinnings = 0;
+            let winCount = 0;
+
+            // Check each bet the user made
+            Object.entries(userBets).forEach(([commodityId, betInfo]) => {
+                // Cast betInfo to the correct type
+                const typedBetInfo = betInfo as { direction: 'up' | 'down', amount: number };
+                const resultDirection = gameState.results ? gameState.results[commodityId] : null;
+                
+                if (resultDirection && resultDirection === typedBetInfo.direction) {
+                    // Winner: 1.95x payout
+                    totalWinnings += typedBetInfo.amount * 1.95;
+                    winCount++;
+                }
+            });
+
+            if (totalWinnings > 0) {
+                onBalanceUpdate(totalWinnings, 'xboomStockMarket');
+                addToast(`مبروك! ربحت ${formatNumber(totalWinnings)} 💎 من ${winCount} توقعات صحيحة`, 'success');
+                
+                if (totalWinnings > 10000 && userProfile?.displayName) {
+                    onAnnounceWin(userProfile.displayName, totalWinnings, 'xboomStockMarket');
+                }
+            } else if (Object.keys(userBets).length > 0) {
+                addToast('حظ أوفر، لم تصب توقعاتك هذه المرة.', 'error');
+            }
+
+            setPayoutProcessed(true);
+        }
+    }, [gameState, userBets, payoutProcessed, onBalanceUpdate, onAnnounceWin, userProfile]);
+
+    const handleBet = async (id: string, direction: 'up' | 'down') => {
+        if (!userProfile || gameState?.status !== 'betting') return;
+        
+        const currentBetsCount = Object.keys(userBets).length;
+        const isExistingBet = !!userBets[id];
+
+        // LIMIT: Only 4 items allowed per round
+        if (currentBetsCount >= 4 && !isExistingBet) {
+            addToast('يمكنك اختيار 4 صفقات فقط في الجولة الواحدة لضمان التوازن', 'info');
+            return;
+        }
+        
+        // Prevent betting on same item twice (override check handled by UI state usually, but good to have)
+        if (isExistingBet) {
+             addToast(`لقد قمت بالتوقع لـ ${COMMODITIES.find(c => c.id === id)?.name} بالفعل`, 'info');
+             return;
+        }
+
+        if (bet > userProfile.balance) {
+            addToast('رصيد غير كاف', 'error');
             return;
         }
 
-        const success = await onBalanceUpdate(-totalBet, 'stockMarketGame');
-        if (!success) return;
+        // Deduct Balance
+        const success = await onBalanceUpdate(-bet, 'xboomStockMarket');
+        if (success) {
+            // Update Local State
+            setUserBets(prev => ({
+                ...prev,
+                [id]: { direction, amount: bet }
+            }));
+            
+            const commName = COMMODITIES.find(c => c.id === id)?.name;
+            addToast(`تم التوقع: ${direction === 'up' ? 'صعود' : 'هبوط'} لـ ${commName}`, 'success');
 
-        const newResults: Result = {};
-        let winnings = 0;
-        for (const bet of bets) {
-            const outcomeUp = Math.random() > 0.5;
-            const didWin = (bet.direction === 'up' && outcomeUp) || (bet.direction === 'down' && !outcomeUp);
-            if (didWin) {
-                newResults[bet.commodityId] = 'win';
-                winnings += bet.amount * WIN_MULTIPLIER;
-            } else {
-                newResults[bet.commodityId] = 'loss';
+            // Sync with Server (Multiplayer Record)
+            try {
+                await runTransaction(db, async (transaction) => {
+                    const gameRef = doc(db, 'public', 'stockMarket');
+                    const sfDoc = await transaction.get(gameRef);
+                    if (!sfDoc.exists()) throw new Error("MISSING_DOC");
+
+                    const currentData = sfDoc.data() as StockMarketGameState;
+                    if (currentData.status !== 'betting') throw new Error("GAME_CLOSED");
+
+                    const betsMap = currentData.bets || {};
+                    const userGameBet = betsMap[userProfile.uid] || {
+                        userId: userProfile.uid,
+                        nickname: userProfile.displayName || 'Player',
+                        bets: []
+                    };
+
+                    const existingBets = Array.isArray(userGameBet.bets) ? userGameBet.bets : [];
+                    existingBets.push({
+                        commodityId: id,
+                        direction: direction,
+                        amount: bet
+                    });
+
+                    userGameBet.bets = existingBets;
+                    betsMap[userProfile.uid] = userGameBet;
+                    
+                    transaction.update(gameRef, { bets: betsMap });
+                });
+            } catch (e: any) {
+                console.error("Bet sync error:", e);
+                // Refund on failure
+                await onBalanceUpdate(bet, 'xboomStockMarket');
+                setUserBets(prev => {
+                    const newState = { ...prev };
+                    delete newState[id];
+                    return newState;
+                });
+                
+                if (e.message === "GAME_CLOSED") {
+                    addToast("انتهى وقت التوقعات لهذه الجولة", "info");
+                } else {
+                    addToast("حدث خطأ في الاتصال. تم استرجاع الرصيد.", "error");
+                }
             }
         }
-
-        setResults(newResults);
-        setTotalWinnings(winnings);
-
-        if (winnings > 0) {
-            onBalanceUpdate(winnings, 'stockMarketGame');
-            addToast(`لقد ربحت ${formatNumber(winnings)} 💎!`, 'success');
-            if (winnings > 10000 && userProfile.displayName) {
-                onAnnounceWin(userProfile.displayName, winnings, 'stockMarketGame');
-            }
-        }
-    }, [bets, totalBet, userProfile, onBalanceUpdate, addToast, onAnnounceWin]);
-
-    const resetGame = useCallback(() => {
-        setBets([]);
-        setResults({});
-        setTotalWinnings(0);
-    }, []);
-
-    const { phase, timeRemaining } = useGameLoop({
-        onRoundStart: handleRoundStart,
-        onRoundEnd: resetGame,
-    }, {
-        preparationTime: PREPARATION_TIME,
-        gameTime: GAME_TIME,
-        resultsTime: RESULTS_TIME,
-    });
-    
-    const placeBet = (commodityId: string, direction: BetDirection) => {
-        if (phase !== 'preparing') return;
-        const existingBetIndex = bets.findIndex(b => b.commodityId === commodityId);
-        const newBets = [...bets];
-        if (existingBetIndex > -1) {
-            // Update existing bet
-            newBets[existingBetIndex] = { ...newBets[existingBetIndex], direction, amount: newBets[existingBetIndex].amount + betAmount };
-        } else {
-            // Add new bet
-            newBets.push({ commodityId, direction, amount: betAmount });
-        }
-        setBets(newBets);
     };
 
-    const getBetForCommodity = (id: string) => bets.find(b => b.commodityId === id);
-
     return (
-        <div className="flex flex-col h-full p-2 relative">
-             <HowToPlay>
-                <p>1. حدد مبلغ الرهان من الأسفل.</p>
-                <p>2. توقع حركة السعر لأي أصل (ذهب، نفط، بيتكوين...) خلال الـ 10 ثواني القادمة.</p>
-                <p>3. اضغط <strong>"صعود ▲"</strong> إذا كنت تتوقع ارتفاع السعر.</p>
-                <p>4. اضغط <strong>"هبوط ▼"</strong> إذا كنت تتوقع انخفاض السعر.</p>
-                <p>5. إذا صح توقعك، تربح 1.95 ضعف رهانك!</p>
-            </HowToPlay>
+        <div className="flex flex-col h-full p-2 overflow-y-auto">
+            {/* Aesthetic Market Simulator */}
+            <MarketSimulator />
 
-            {totalWinnings > totalBet * 5 && <Confetti onComplete={() => {}} />}
-            <header className="text-center mb-4 mt-6">
-                <h1 className="text-4xl font-bold">بورصة اكس بوم</h1>
-                <p className="text-gray-400">توقع حركة السعر واربح x{WIN_MULTIPLIER}</p>
-            </header>
+            <div className="text-center mb-4 sticky top-0 z-10 bg-gray-900/90 pb-2 pt-1 backdrop-blur-sm border-b border-gray-800">
+                <div className="flex justify-between items-center mb-2">
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${gameState?.status === 'betting' ? 'bg-green-900 text-green-400 border border-green-700' : 'bg-yellow-900 text-yellow-400 border border-yellow-700'}`}>
+                        {gameState?.status === 'betting' ? '🟢 التوقعات مفتوحة' : '🟡 جاري المعالجة...'}
+                    </span>
+                    {gameState?.status === 'betting' && (
+                        <span className="text-xs text-gray-400">
+                            اختر حتى 4 سلع ({Object.keys(userBets).length}/4)
+                        </span>
+                    )}
+                </div>
+            </div>
 
-            {/* Game Grid */}
-            <div className="flex-grow grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 overflow-y-auto pr-2">
+            <div className="grid gap-3 pb-20">
                 {COMMODITIES.map(c => {
-                    const bet = getBetForCommodity(c.id);
-                    const result = results[c.id];
+                    const myBet = userBets[c.id]; // { direction, amount }
+                    const isLocked = !!myBet; 
+                    const resultDirection = gameState?.status === 'result' && gameState.results ? gameState.results[c.id] : null;
+
                     return (
-                        <div key={c.id} className={`game-item p-3 rounded-lg flex flex-col justify-between transition-all duration-300
-                            ${result === 'win' ? 'bg-green-500/20 border-2 border-green-400' : ''}
-                            ${result === 'loss' ? 'bg-red-500/20 border-2 border-red-400' : ''}
-                            ${!result ? 'bg-gray-900/50 border border-gray-700' : ''}
+                        <div key={c.id} className={`p-3 rounded-lg flex items-center justify-between border transition-all
+                            ${isLocked ? 'bg-gray-800 border-gray-600' : 'bg-gray-800/50 border-gray-700'}
+                            ${resultDirection ? (resultDirection === 'up' ? 'shadow-[0_0_10px_rgba(34,197,94,0.2)]' : 'shadow-[0_0_10px_rgba(239,68,68,0.2)]') : ''}
                         `}>
-                            <div>
-                                <div className="flex items-center gap-2 mb-2">
-                                    <span className="text-2xl">{c.icon}</span>
-                                    <h3 className="font-bold text-white">{c.name}</h3>
+                            <div className="flex items-center gap-3">
+                                <span className="text-3xl">{c.icon}</span>
+                                <div>
+                                    <span className="font-bold text-gray-200 block">{c.name}</span>
+                                    {isLocked && (
+                                        <span className="text-xs text-yellow-400 font-mono">
+                                            {formatNumber(myBet.amount)} 💎 : {myBet.direction === 'up' ? '▲' : '▼'}
+                                        </span>
+                                    )}
                                 </div>
-                                <MiniChart running={phase === 'running'} result={result} />
-                                {bet && (
-                                    <div className={`mt-2 text-center text-sm font-bold p-1 rounded ${
-                                        bet.direction === 'up' ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'
-                                    }`}>
-                                        رهان: {formatNumber(bet.amount)} ({bet.direction === 'up' ? 'صعود' : 'هبوط'})
-                                    </div>
-                                )}
                             </div>
-                            <div className="flex gap-2 mt-3">
-                                <button onClick={() => placeBet(c.id, 'up')} disabled={phase !== 'preparing'}
-                                    className="flex-1 py-2 text-sm font-bold bg-green-600 hover:bg-green-500 rounded transition disabled:opacity-50 disabled:cursor-not-allowed">
-                                    صعود ▲
-                                </button>
-                                <button onClick={() => placeBet(c.id, 'down')} disabled={phase !== 'preparing'}
-                                    className="flex-1 py-2 text-sm font-bold bg-red-600 hover:bg-red-500 rounded transition disabled:opacity-50 disabled:cursor-not-allowed">
-                                    هبوط ▼
-                                </button>
-                            </div>
+                            
+                            {gameState?.status === 'result' && resultDirection ? (
+                                <div className="flex flex-col items-end">
+                                    <span className={`font-black text-xl ${resultDirection === 'up' ? 'text-green-400' : 'text-red-400'}`}>
+                                        {resultDirection === 'up' ? '▲ صعود' : '▼ هبوط'}
+                                    </span>
+                                    {isLocked && (
+                                        <span className={`text-xs font-bold ${myBet.direction === resultDirection ? 'text-green-400 bg-green-900/30 px-2 rounded' : 'text-red-400 bg-red-900/30 px-2 rounded'}`}>
+                                            {myBet.direction === resultDirection ? '✓ ربحت' : '✕ خسرت'}
+                                        </span>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => handleBet(c.id, 'up')} 
+                                        disabled={isLocked || gameState?.status !== 'betting'} 
+                                        className={`w-12 h-10 rounded-lg font-bold flex items-center justify-center transition-all
+                                            ${myBet?.direction === 'up' ? 'bg-green-500 text-white ring-2 ring-white shadow-lg' : 'bg-green-900/40 text-green-500 border border-green-800 hover:bg-green-800'} 
+                                            disabled:opacity-50
+                                        `}
+                                    >
+                                        ▲
+                                    </button>
+                                    <button 
+                                        onClick={() => handleBet(c.id, 'down')} 
+                                        disabled={isLocked || gameState?.status !== 'betting'} 
+                                        className={`w-12 h-10 rounded-lg font-bold flex items-center justify-center transition-all
+                                            ${myBet?.direction === 'down' ? 'bg-red-500 text-white ring-2 ring-white shadow-lg' : 'bg-red-900/40 text-red-500 border border-red-800 hover:bg-red-800'} 
+                                            disabled:opacity-50
+                                        `}
+                                    >
+                                        ▼
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     );
                 })}
             </div>
 
-            {/* Footer Controls */}
-            <footer className="mt-4 p-3 bg-gray-900/50 rounded-lg border border-gray-700">
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <div className="flex-1 w-full">
-                        <label className="text-sm text-gray-400">مبلغ الرهان</label>
-                        <div className="flex gap-2 mt-1">
-                            {QUICK_BETS.map(amount => (
-                                <button key={amount} onClick={() => setBetAmount(amount)} disabled={phase !== 'preparing'}
-                                    className={`flex-1 py-2 font-bold rounded transition ${betAmount === amount ? 'bg-purple-600 text-white' : 'bg-gray-700 hover:bg-gray-600'} disabled:opacity-50`}>
-                                    {formatNumber(amount)}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                    <div className="text-center">
-                        <p className="text-gray-400">إجمالي الرهان</p>
-                        <p className="text-2xl font-bold text-yellow-300 flex items-center gap-2">
-                           <DiamondIcon className="w-6 h-6" /> {formatNumber(totalBet)}
-                        </p>
-                    </div>
-                    <div className="text-center">
-                        {phase === 'preparing' && <p className="text-cyan-400">الجولة تبدأ بعد: {timeRemaining} ثانية</p>}
-                        {phase === 'running' && <p className="text-red-500 animate-pulse">الجولة جارية...</p>}
-                        {phase === 'results' && (
-                             <div>
-                                <p className="text-purple-400">النتائج</p>
-                                <p className={`text-xl font-bold ${totalWinnings >= totalBet ? 'text-green-400' : 'text-red-400'}`}>
-                                    {totalWinnings >= totalBet ? '+' : ''}{formatNumber(totalWinnings - totalBet)}
-                                </p>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </footer>
+            <div className="fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-700 p-4 z-20">
+                <BetControls bet={bet} setBet={setBet} balance={userProfile?.balance ?? 0} disabled={gameState?.status !== 'betting'} />
+            </div>
         </div>
     );
 };
-
 export default XboomStockMarketGame;

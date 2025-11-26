@@ -1,20 +1,4 @@
 
-/*
-  [ملاحظة هامة جداً للمطور] *** سبب قفل التطبيق وكيفية إصلاحه نهائياً ***
-
-  إذا كان التطبيق "مقفلاً" عند شاشة تسجيل الدخول ويعرض خطأ "أذونات غير كافية"،
-  فالسبب الوحيد والمؤكد هو أن قواعد أمان Firestore في مشروع Firebase الخاص بك غير صحيحة.
-
-  الحل بسيط ومباشر:
-  1. اذهب إلى ملف `App.tsx` في هذا المشروع.
-  2. ستجد في أعلى الملف تعليقاً يحتوي على مجموعة القواعد الكاملة والصحيحة (قسم لـ Firestore وقسم لـ Storage).
-  3. انسخ مجموعة قواعد Firestore بالكامل.
-  4. اذهب إلى لوحة تحكم مشروعك في Firebase -> Firestore Database -> Rules.
-  5. احذف كل ما هو موجود والصق القواعد التي نسختها.
-  6. اضغط "Publish".
-
-  **هذا هو الحل الوحيد والنهائي للمشكلة. لا يمكن إصلاحها من خلال تعديل الكود.**
-*/
 import React, { useState, useEffect, createContext, useContext, useCallback, ReactNode } from 'react';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
@@ -71,11 +55,6 @@ export const useToast = () => {
 // ------------------------------------
 
 async function generateUniquePlayerID(): Promise<string> {
-    // [ملاحظة للمطور] تم تبسيط هذه الدالة لإزالة الاستعلام عن قاعدة البيانات،
-    // والذي كان يسبب خطأ "أذونات غير كافية" عند إنشاء حساب جديد.
-    // لا يملك المستخدمون الجدد إذنًا للبحث في مجموعة "users" بأكملها.
-    // هذا الحل يولد ID عشوائيًا، وفي بيئة الإنتاج الحقيقية، يجب ضمان التفرد
-    // عبر دالة سحابية (Cloud Function) لتجنب التضارب المحتملة.
     const playerID = Math.floor(10000000 + Math.random() * 90000000).toString();
     return playerID;
 }
@@ -85,10 +64,13 @@ const AuthGate: React.FC = () => {
     const [user, setUser] = useState<AppUser | null>(null);
     const [loading, setLoading] = useState(true);
     const [authError, setAuthError] = useState('');
+    const [isOffline, setIsOffline] = useState(false);
 
     useEffect(() => {
         // هذا المستمع من Firebase يعمل عند تغيير حالة تسجيل الدخول (دخول، خروج، أو عند تحميل الصفحة أول مرة)
         const unsubscribe = onAuthStateChanged(auth, async (currentUser: FirebaseUser | null) => {
+            setIsOffline(false); // Reset offline state on new attempt
+            
             if (currentUser) {
                 // --- المستخدم مسجل دخوله ---
                 const userDocRef = doc(db, 'users', currentUser.uid);
@@ -103,6 +85,15 @@ const AuthGate: React.FC = () => {
                     
                     const userData = userDoc.exists() ? userDoc.data() : null;
                     const isMaintenanceActive = maintenanceDoc.exists() && maintenanceDoc.data().isActive === true;
+
+                    // 0. التحقق من الحظر (Ban Check) - NEW
+                    if (userData?.isBanned) {
+                        setAuthError('⛔ تم حظر حسابك. تواصل مع الإدارة لاستعادة الوصول.');
+                        await signOut(auth);
+                        setUser(null);
+                        setLoading(false);
+                        return;
+                    }
 
                     // 1. التحقق من وضع الصيانة
                     if (isMaintenanceActive && !userData?.isAdmin) {
@@ -131,6 +122,7 @@ const AuthGate: React.FC = () => {
                             // لا يتم جمع العمر من تسجيل دخول جوجل
                             createdAt: serverTimestamp(),
                             lastActive: serverTimestamp(),
+                            isBanned: false
                         };
                         
                         // إنشاء مستند جديد للمستخدم في Firestore
@@ -155,27 +147,34 @@ const AuthGate: React.FC = () => {
                         photoURL: currentUser.photoURL,
                         playerID: finalPlayerID
                     });
+                    setAuthError('');
                     
                 } catch (error: any) {
                     // --- معالجة الأخطاء المحتملة أثناء العملية ---
-                    console.error("AuthGate: Error handling user document:", error);
                     const isPermissionError = error.code === 'permission-denied' || 
                                               (error.message && (error.message.toLowerCase().includes('permission denied') || error.message.toLowerCase().includes('insufficient permissions')));
                     
-                    const isOfflineError = error.code === 'unavailable' || (error.message && error.message.toLowerCase().includes('client is offline'));
+                    const isOfflineError = error.code === 'unavailable' || 
+                                           (error.message && (error.message.toLowerCase().includes('client is offline') || error.message.toLowerCase().includes('backend didn\'t respond'))) ||
+                                           !navigator.onLine;
 
-                    if (isPermissionError) {
-                        // خطأ شائع جداً: قواعد الأمان في Firestore غير صحيحة.
-                        // يتم تعيين مفتاح خاص لعرض شاشة الإصلاح الكاملة في صفحة تسجيل الدخول.
+                    if (isOfflineError) {
+                         console.warn("AuthGate: Offline detected during auth init.");
+                         // Don't sign out, show offline screen
+                         setIsOffline(true);
+                    } else if (isPermissionError) {
+                        console.error("AuthGate: Permission Denied", error);
                         setAuthError('LOCKOUT:PERMISSION_DENIED');
-                    } else if (isOfflineError) {
-                         setAuthError('فشل الاتصال بالخادم. يرجى التحقق من اتصالك بالإنترنت والمحاولة مرة أخرى.');
+                        await signOut(auth);
+                        setUser(null);
                     } else {
-                        setAuthError('حدث خطأ في تهيئة الحساب. يرجى المحاولة مرة أخرى أو التواصل مع الدعم إذا استمرت المشكلة.');
+                        console.error("AuthGate: Critical Error handling user document:", error);
+                        setAuthError('حدث خطأ في تهيئة الحساب. يرجى المحاولة مرة أخرى.');
+                        // Keep user logged in but show error state in login page if we redirect
+                        // For now, let's sign out to be safe for critical data errors
+                        await signOut(auth);
+                        setUser(null);
                     }
-                    // تسجيل خروج المستخدم لمنعه من الدخول في حالة حلقة خطأ
-                    await signOut(auth);
-                    setUser(null);
                 }
             } else {
                 // --- المستخدم غير مسجل دخوله ---
@@ -193,6 +192,24 @@ const AuthGate: React.FC = () => {
         return (
             <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white text-2xl font-bold">
                 جاري تحميل xboom...
+            </div>
+        );
+    }
+
+    if (isOffline) {
+        return (
+            <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center text-white p-4 text-center">
+                <div className="text-6xl mb-4 animate-pulse">📡</div>
+                <h2 className="text-2xl font-bold mb-2 text-red-400">انقطع الاتصال</h2>
+                <p className="text-gray-400 mb-6 max-w-md">
+                    تعذر الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت الخاص بك والمحاولة مرة أخرى.
+                </p>
+                <button 
+                    onClick={() => window.location.reload()} 
+                    className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 rounded-full font-bold shadow-lg hover:scale-105 transition-transform"
+                >
+                    إعادة المحاولة
+                </button>
             </div>
         );
     }

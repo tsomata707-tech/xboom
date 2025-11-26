@@ -62,7 +62,7 @@ const BetControls: React.FC<BetControlsProps> = ({
           {quickBets.map((value) => (
               <button
                 key={value}
-                onClick={() => setBet(prev => prev + value)}
+                onClick={() => setBet(bet + value)}
                 disabled={disabled}
                 className="px-4 py-1.5 bg-gray-700 text-white font-semibold rounded-full hover:bg-gray-600 transition disabled:opacity-50"
               >

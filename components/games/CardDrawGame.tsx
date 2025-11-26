@@ -1,157 +1,303 @@
 
-import React, { useState, useCallback, useMemo } from 'react';
-import type { AppUser, GameId } from '../../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { doc, onSnapshot, runTransaction } from 'firebase/firestore';
+import { db } from '../../firebase';
+import type { AppUser, GameId, CardDrawGameState } from '../../types';
 import { useToast } from '../../AuthGate';
+import BetControls from '../BetControls';
 import Confetti from '../Confetti';
+import { convertTimestamps } from '../utils/convertTimestamps';
 import { formatNumber } from '../utils/formatNumber';
-import { useGameLoop } from '../hooks/useGameLoop';
-import GameTimerDisplay from '../GameTimerDisplay';
-import HowToPlay from '../HowToPlay';
 
-interface UserProfile extends AppUser {
-    balance: number;
-}
+interface UserProfile extends AppUser { balance: number; }
+interface Props { userProfile: UserProfile | null; onBalanceUpdate: (amount: number, gameId: GameId) => Promise<boolean>; onAnnounceWin: any; }
 
-interface CardDrawGameProps {
-    userProfile: UserProfile | null;
-    onBalanceUpdate: (amount: number, gameId: GameId) => Promise<boolean>;
-    onAnnounceWin: (nickname: string, amount: number, gameName: GameId) => void;
-}
-
-const SUITS = { '♥': 'red', '♦': 'red', '♣': 'black', '♠': 'black' };
-const VALUES = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-const BET_TYPES = {
-    color: { multiplier: 2, options: ['red', 'black'] },
-    suit: { multiplier: 4, options: ['♥', '♦', '♣', '♠'] }
+const SUITS_CONFIG = {
+    '♥': { color: 'text-red-600', name: 'hearts' },
+    '♦': { color: 'text-red-600', name: 'diamonds' },
+    '♣': { color: 'text-gray-900', name: 'clubs' },
+    '♠': { color: 'text-gray-900', name: 'spades' }
 };
 
-type BetType = 'red' | 'black' | '♥' | '♦' | '♣' | '♠';
-type Bets = { [key in BetType]?: number };
-
-const CardDrawGame: React.FC<CardDrawGameProps> = ({ userProfile, onBalanceUpdate, onAnnounceWin }) => {
+const CardDrawGame: React.FC<Props> = ({ userProfile, onBalanceUpdate, onAnnounceWin }) => {
     const { addToast } = useToast();
-    const [bets, setBets] = useState<Bets>({});
-    const [betAmount, setBetAmount] = useState(100);
-    const [drawnCard, setDrawnCard] = useState<{ value: string, suit: keyof typeof SUITS } | null>(null);
-    const [winnings, setWinnings] = useState(0);
+    const [gameState, setGameState] = useState<CardDrawGameState | null>(null);
+    const [bet, setBet] = useState(100);
+    const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
+    const [hasBet, setHasBet] = useState(false);
     const [showConfetti, setShowConfetti] = useState(false);
+    const [resultStatus, setResultStatus] = useState<'win' | 'loss' | null>(null);
+    const [isFlipped, setIsFlipped] = useState(false);
+    const [payoutProcessed, setPayoutProcessed] = useState(false);
+    
+    // Critical: Track the last processed round ID to force resets
+    const lastRoundIdRef = useRef<number | string>('');
 
-    // FIX: The type of `val` was being inferred as `unknown`. Using `Number(val)` ensures it is treated as a number for the addition.
-    const totalBet = useMemo(() => Object.values(bets).reduce((sum: number, val) => sum + (Number(val) || 0), 0), [bets]);
+    // Sync with Server
+    useEffect(() => {
+        const unsub = onSnapshot(doc(db, 'public', 'cardDraw'), (s) => {
+            if (s.exists()) {
+                const data = convertTimestamps(s.data()) as CardDrawGameState;
+                setGameState(data);
+            }
+        });
+        return () => unsub();
+    }, []);
 
-    const handleRoundStart = async () => {
-        if (totalBet === 0) return;
-        if (!userProfile || totalBet > userProfile.balance) {
-            addToast("رصيدك غير كافٍ.", "error");
+    // Main Game Loop & State Reset Logic
+    useEffect(() => {
+        if (!gameState) return;
+
+        // CHECK FOR NEW ROUND: Force reset if round ID has changed
+        if (gameState.roundId !== lastRoundIdRef.current) {
+            lastRoundIdRef.current = gameState.roundId;
+            
+            // --- HARD RESET LOCAL STATE ---
+            setHasBet(false);           // Re-enable betting buttons
+            setSelectedChoice(null);    // Clear previous selection mark
+            setResultStatus(null);      // Clear Win/Loss stamp
+            setIsFlipped(false);        // Flip card back to face down
+            setPayoutProcessed(false);  // Reset payout flag
+            setShowConfetti(false);     // Stop confetti
+            // Note: We do NOT reset 'bet' (amount), purely for UX convenience
+            
+            return; // Exit effect to prevent processing result logic on the same render
+        }
+
+        // HANDLE RESULT PHASE
+        if (gameState.status === 'result' && gameState.result && !payoutProcessed) {
+            // 1. Trigger Animation
+            setIsFlipped(true);
+
+            // 2. Process Result (Only if user bet in this round)
+            if (hasBet && selectedChoice) {
+                const actualSuit = gameState.result.suit;
+                const actualColor = (actualSuit === '♥' || actualSuit === '♦') ? 'red' : 'black';
+                
+                let won = false;
+                let multiplier = 0;
+
+                if (selectedChoice === 'red' || selectedChoice === 'black') {
+                    if (selectedChoice === actualColor) {
+                        won = true;
+                        multiplier = 2;
+                    }
+                } else {
+                    if (selectedChoice === actualSuit) {
+                        won = true;
+                        multiplier = 4;
+                    }
+                }
+
+                setPayoutProcessed(true); // Lock processing
+
+                // Delay showing result stamp to match flip animation
+                setTimeout(() => {
+                    if (won) {
+                        const winnings = bet * multiplier;
+                        onBalanceUpdate(winnings, 'cardDraw');
+                        setResultStatus('win');
+                        setShowConfetti(true);
+                        addToast(`مبروك! ربحت ${formatNumber(winnings)} 💎`, 'success');
+                        if (winnings > 10000 && userProfile?.displayName) {
+                            onAnnounceWin(userProfile.displayName, winnings, 'cardDraw');
+                        }
+                    } else {
+                        setResultStatus('loss');
+                        addToast('حظ أوفر في المرة القادمة', 'error');
+                    }
+                }, 600);
+            }
+        }
+    }, [gameState, hasBet, selectedChoice, bet, payoutProcessed, userProfile, onBalanceUpdate, onAnnounceWin]);
+
+    const handleBet = async (choice: string) => {
+        if (!userProfile || !gameState || gameState.status !== 'betting') return;
+        
+        if (hasBet) {
+            addToast('لقد قمت بالرهان بالفعل', 'info');
             return;
         }
 
-        const success = await onBalanceUpdate(-totalBet, 'cardDraw');
-        if (!success) return;
-
-        const randomSuit = Object.keys(SUITS)[Math.floor(Math.random() * 4)] as keyof typeof SUITS;
-        const randomValue = VALUES[Math.floor(Math.random() * VALUES.length)];
-        const card = { value: randomValue, suit: randomSuit };
-        setDrawnCard(card);
-
-        const cardColor = SUITS[card.suit];
-        let winAmount = 0;
-        if (bets[cardColor]) {
-            winAmount += bets[cardColor]! * BET_TYPES.color.multiplier;
+        if (bet > userProfile.balance) {
+            addToast('رصيد غير كاف', 'error');
+            return;
         }
-        if (bets[card.suit]) {
-            winAmount += bets[card.suit]! * BET_TYPES.suit.multiplier;
-        }
-        
-        setWinnings(winAmount);
 
-        if (winAmount > 0) {
-            onBalanceUpdate(winAmount, 'cardDraw');
-            addToast(`لقد ربحت ${formatNumber(winAmount)} 💎!`, 'success');
-            if (winAmount > 10000 && userProfile.displayName) {
-                onAnnounceWin(userProfile.displayName, winAmount, 'cardDraw');
-            }
-             if (winAmount > totalBet * 5) {
-                setShowConfetti(true);
+        // Optimistic UI update
+        const success = await onBalanceUpdate(-bet, 'cardDraw');
+        if (success) {
+            setSelectedChoice(choice);
+            setHasBet(true); // This disables the controls
+            addToast('تم تسجيل الرهان', 'success');
+
+            try {
+                // Sync with Server
+                await runTransaction(db, async (transaction) => {
+                    const gameRef = doc(db, 'public', 'cardDraw');
+                    const sfDoc = await transaction.get(gameRef);
+                    if (!sfDoc.exists()) return;
+
+                    const currentData = sfDoc.data() as CardDrawGameState;
+                    if (currentData.status !== 'betting') throw "Game Closed";
+
+                    const bets = currentData.bets || {};
+                    bets[userProfile.uid] = {
+                        userId: userProfile.uid,
+                        nickname: userProfile.displayName || 'Player',
+                        bets: { [choice]: bet }
+                    };
+                    
+                    transaction.update(gameRef, { bets: bets });
+                });
+            } catch (e) {
+                console.error("Bet sync error:", e);
             }
         }
     };
 
-    const resetGame = useCallback(() => {
-        setBets({});
-        setDrawnCard(null);
-        setWinnings(0);
-        setShowConfetti(false);
-    }, []);
+    const resultCard = gameState?.result || { suit: '♠', value: 'A' };
+    const cardConfig = SUITS_CONFIG[resultCard.suit as keyof typeof SUITS_CONFIG] || SUITS_CONFIG['♠'];
+    const participantsCount = gameState?.bets ? Object.keys(gameState.bets).length : 0;
 
-    const { phase, timeRemaining, totalTime } = useGameLoop({
-        onRoundStart: handleRoundStart,
-        onRoundEnd: resetGame,
-    }, { preparationTime: 12, gameTime: 3, resultsTime: 5 });
+    // Helper to determine if controls should be interactive
+    const isControlsDisabled = hasBet || gameState?.status !== 'betting';
 
-    const placeBet = (type: BetType) => {
-        setBets(prev => ({
-            ...prev,
-            [type]: (prev[type] || 0) + betAmount
-        }));
-    };
-    
-    const controlsDisabled = phase !== 'preparing';
-    
     return (
-        <div className="flex flex-col items-center justify-between h-full p-4 relative">
-            {showConfetti && <Confetti onComplete={() => {}} />}
+        <div className="flex flex-col items-center justify-between h-full p-4 relative overflow-hidden">
+            {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
             
-            <HowToPlay>
-                 <p>1. حدد قيمة الرهان في الأسفل.</p>
-                 <p>2. اضغط على الخيارات للمراهنة عليها:</p>
-                 <ul className="list-disc list-inside pr-4">
-                     <li><strong>اللون:</strong> (أحمر أو أسود) يضاعف رهانك مرتين (x2).</li>
-                     <li><strong>الشكل:</strong> (قلب، بستوني، ديناري، سباتي) يضاعف رهانك 4 مرات (x4).</li>
-                 </ul>
-                 <p>3. يمكنك وضع رهانات متعددة في نفس الجولة.</p>
-                 <p>4. انتظر سحب البطاقة لترى النتيجة!</p>
-            </HowToPlay>
+            {/* Header Status */}
+            <div className="w-full flex justify-between items-center mb-4 z-10 px-2">
+                <div className="bg-black/40 px-3 py-1 rounded-full text-xs text-gray-300">
+                    👥 {participantsCount} لاعبين
+                </div>
+                <div className={`px-6 py-2 rounded-full font-bold text-lg shadow-lg border-2 transition-colors duration-300
+                    ${gameState?.status === 'betting' ? 'bg-green-900/80 border-green-500 text-green-300' : 
+                      gameState?.status === 'drawing' ? 'bg-yellow-900/80 border-yellow-500 text-yellow-300' : 
+                      'bg-gray-800 border-gray-500 text-white'}
+                `}>
+                    {gameState?.status === 'betting' ? 'اختر وتوقع ⏱️' : 
+                     gameState?.status === 'drawing' ? 'جاري السحب... 🃏' : 'النتيجة ✨'}
+                </div>
+                <div className="w-16"></div>
+            </div>
 
-            <GameTimerDisplay phase={phase} timeRemaining={timeRemaining} totalTime={totalTime} />
-
-            <div className="flex-grow w-full flex items-center justify-center my-4">
-                <div className={`w-40 h-60 sm:w-48 sm:h-72 rounded-xl transition-all duration-500 transform
-                    ${drawnCard ? 'rotate-y-180' : 'rotate-y-0'} transform-style-3d`}>
-                    <div className="absolute w-full h-full backface-hidden bg-gradient-to-br from-purple-700 to-indigo-900 rounded-xl border-2 border-purple-400 flex items-center justify-center">
-                        <span className="text-6xl text-purple-200">🎴</span>
+            {/* 3D Card Area */}
+            <div className="flex-grow flex items-center justify-center perspective-1000 w-full mb-4">
+                <div className={`relative w-56 h-80 transition-transform duration-1000 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
+                    
+                    {/* Back of Card (Face Down) */}
+                    <div className="absolute inset-0 w-full h-full backface-hidden rounded-2xl border-4 border-white shadow-2xl bg-gradient-to-br from-blue-900 to-blue-700 flex items-center justify-center overflow-hidden">
+                        {/* Pattern */}
+                        <div className="absolute inset-0 opacity-20" style={{
+                            backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 10px, #ffffff 10px, #ffffff 12px)',
+                        }}></div>
+                        <div className="w-24 h-24 rounded-full border-4 border-yellow-500 flex items-center justify-center bg-blue-950 shadow-inner z-10">
+                            <span className="text-5xl">🃏</span>
+                        </div>
                     </div>
-                    {drawnCard && (
-                         <div className={`absolute w-full h-full backface-hidden bg-white rounded-xl border border-gray-300 rotate-y-180 p-2 flex flex-col justify-between ${SUITS[drawnCard.suit] === 'red' ? 'text-red-500' : 'text-black'}`}>
-                             <div className="text-left text-3xl font-bold">{drawnCard.value}{drawnCard.suit}</div>
-                             <div className="text-center text-7xl">{drawnCard.suit}</div>
-                             <div className="text-right text-3xl font-bold transform rotate-180">{drawnCard.value}{drawnCard.suit}</div>
-                         </div>
-                    )}
+
+                    {/* Front of Card (Face Up) */}
+                    <div className="absolute inset-0 w-full h-full backface-hidden rotate-y-180 rounded-2xl bg-white border-4 border-gray-300 shadow-2xl flex flex-col p-4 justify-between">
+                        <div className={`flex flex-col items-center self-start ${cardConfig.color}`}>
+                            <span className="text-4xl font-black leading-none">{resultCard.value}</span>
+                            <span className="text-3xl leading-none">{resultCard.suit}</span>
+                        </div>
+
+                        <div className={`absolute inset-0 flex items-center justify-center ${cardConfig.color} opacity-20`}>
+                            <span className="text-[10rem]">{resultCard.suit}</span>
+                        </div>
+
+                        <div className={`flex flex-col items-center self-end transform rotate-180 ${cardConfig.color}`}>
+                            <span className="text-4xl font-black leading-none">{resultCard.value}</span>
+                            <span className="text-3xl leading-none">{resultCard.suit}</span>
+                        </div>
+
+                        {/* STAMP OVERLAY */}
+                        {resultStatus && isFlipped && (
+                            <div className="absolute inset-0 flex items-center justify-center z-50 animate-stamp-in pointer-events-none">
+                                <div className={`
+                                    border-[6px] border-double rounded-xl px-8 py-4 transform -rotate-12 
+                                    text-5xl font-black tracking-widest uppercase backdrop-blur-sm shadow-2xl
+                                    ${resultStatus === 'win' 
+                                        ? 'border-green-600 text-green-600 bg-green-100/90' 
+                                        : 'border-red-600 text-red-600 bg-red-100/90'}
+                                `}>
+                                    {resultStatus === 'win' ? 'WIN' : 'LOSS'}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
-            <div className="h-8 text-xl font-bold text-center mt-2 game-container-animation">
-                {phase === 'results' && winnings > 0 && <span className="text-green-400">🎉 لقد ربحت ${formatNumber(winnings)} 💎!</span>}
-                {phase === 'results' && winnings === 0 && <span className="text-red-500">حظ أفضل في المرة القادمة!</span>}
+            {/* Controls */}
+            <div className="w-full max-w-md z-20 bg-gray-900/90 p-4 rounded-xl border-t border-gray-700 backdrop-blur-md shadow-[0_-10px_20px_rgba(0,0,0,0.5)]">
+                <div className="grid grid-cols-4 gap-2 mb-4">
+                    {Object.keys(SUITS_CONFIG).map((suit) => (
+                        <button
+                            key={suit}
+                            onClick={() => handleBet(suit)}
+                            disabled={isControlsDisabled}
+                            className={`aspect-square rounded-xl text-3xl flex items-center justify-center border-2 transition-all duration-200
+                                ${SUITS_CONFIG[suit as keyof typeof SUITS_CONFIG].color === 'text-red-600' ? 'bg-red-50' : 'bg-gray-100'}
+                                ${selectedChoice === suit 
+                                    ? 'ring-4 ring-yellow-400 scale-105 shadow-lg border-yellow-500 z-10' 
+                                    : 'border-gray-400 hover:scale-105'}
+                                ${isControlsDisabled && selectedChoice !== suit ? 'opacity-50 grayscale cursor-not-allowed' : ''}
+                            `}
+                        >
+                            <span className={SUITS_CONFIG[suit as keyof typeof SUITS_CONFIG].color}>{suit}</span>
+                        </button>
+                    ))}
+                </div>
+                
+                <div className="flex gap-3 mb-4">
+                    <button 
+                        onClick={() => handleBet('red')}
+                        disabled={isControlsDisabled}
+                        className={`flex-1 py-3 rounded-xl font-bold text-white bg-red-600 border-b-4 border-red-800 active:border-b-0 active:translate-y-1 transition-all
+                            ${selectedChoice === 'red' ? 'ring-4 ring-yellow-400 scale-105' : ''} 
+                            ${isControlsDisabled && selectedChoice !== 'red' ? 'opacity-50 cursor-not-allowed' : ''}
+                        `}
+                    >
+                        أحمر (x2)
+                    </button>
+                    <button 
+                        onClick={() => handleBet('black')}
+                        disabled={isControlsDisabled}
+                        className={`flex-1 py-3 rounded-xl font-bold text-white bg-gray-900 border-b-4 border-black active:border-b-0 active:translate-y-1 transition-all
+                            ${selectedChoice === 'black' ? 'ring-4 ring-yellow-400 scale-105' : ''} 
+                            ${isControlsDisabled && selectedChoice !== 'black' ? 'opacity-50 cursor-not-allowed' : ''}
+                        `}
+                    >
+                        أسود (x2)
+                    </button>
+                </div>
+
+                <BetControls 
+                    bet={bet} 
+                    setBet={setBet} 
+                    balance={userProfile?.balance ?? 0} 
+                    disabled={isControlsDisabled} 
+                />
             </div>
 
-            <div className="w-full max-w-2xl bg-gray-900/50 p-3 rounded-2xl border border-gray-700 mt-4">
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                    <button onClick={() => placeBet('red')} disabled={controlsDisabled} className="py-4 font-bold text-xl bg-red-600 rounded-lg hover:bg-red-500 disabled:opacity-50 relative">أحمر (2x) {bets.red && <span className="absolute bottom-1 right-2 text-xs bg-black/50 px-2 rounded-full">{formatNumber(bets.red)}</span>}</button>
-                    <button onClick={() => placeBet('black')} disabled={controlsDisabled} className="py-4 font-bold text-xl bg-gray-800 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 relative">أسود (2x) {bets.black && <span className="absolute bottom-1 right-2 text-xs bg-black/50 px-2 rounded-full">{formatNumber(bets.black)}</span>}</button>
-                </div>
-                <div className="grid grid-cols-4 gap-2">
-                     <button onClick={() => placeBet('♥')} disabled={controlsDisabled} className="py-3 font-bold text-2xl text-red-500 bg-white rounded-lg hover:bg-gray-200 disabled:opacity-50 relative">♥ {bets['♥'] && <span className="absolute bottom-1 right-1 text-xs bg-black/50 text-white px-1 rounded-full">{formatNumber(bets['♥'])}</span>}</button>
-                     <button onClick={() => placeBet('♦')} disabled={controlsDisabled} className="py-3 font-bold text-2xl text-red-500 bg-white rounded-lg hover:bg-gray-200 disabled:opacity-50 relative">♦ {bets['♦'] && <span className="absolute bottom-1 right-1 text-xs bg-black/50 text-white px-1 rounded-full">{formatNumber(bets['♦'])}</span>}</button>
-                     <button onClick={() => placeBet('♣')} disabled={controlsDisabled} className="py-3 font-bold text-2xl text-black bg-white rounded-lg hover:bg-gray-200 disabled:opacity-50 relative">♣ {bets['♣'] && <span className="absolute bottom-1 right-1 text-xs bg-black/50 text-white px-1 rounded-full">{formatNumber(bets['♣'])}</span>}</button>
-                     <button onClick={() => placeBet('♠')} disabled={controlsDisabled} className="py-3 font-bold text-2xl text-black bg-white rounded-lg hover:bg-gray-200 disabled:opacity-50 relative">♠ {bets['♠'] && <span className="absolute bottom-1 right-1 text-xs bg-black/50 text-white px-1 rounded-full">{formatNumber(bets['♠'])}</span>}</button>
-                </div>
-                 <div className="flex gap-2 mt-3">
-                    <input type="number" value={betAmount} onChange={e => setBetAmount(Number(e.target.value))} min="1" disabled={controlsDisabled} className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-center"/>
-                    <button onClick={() => setBets({})} disabled={controlsDisabled || totalBet === 0} className="px-4 bg-red-800 rounded hover:bg-red-700 disabled:opacity-50">مسح</button>
-                 </div>
-            </div>
+            <style>{`
+                .perspective-1000 { perspective: 1000px; }
+                .transform-style-3d { transform-style: preserve-3d; }
+                .backface-hidden { backface-visibility: hidden; }
+                .rotate-y-180 { transform: rotateY(180deg); }
+                
+                @keyframes stamp-in {
+                    0% { transform: scale(3) rotate(-30deg); opacity: 0; }
+                    100% { transform: scale(1) rotate(-12deg); opacity: 1; }
+                }
+                .animate-stamp-in {
+                    animation: stamp-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+                }
+            `}</style>
         </div>
     );
 };

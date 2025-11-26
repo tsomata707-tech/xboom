@@ -4,7 +4,6 @@ import type { AppUser, GameId } from '../../types';
 import { useToast } from '../../AuthGate';
 import BetControls from '../BetControls';
 import { formatNumber } from '../utils/formatNumber';
-import HowToPlay from '../HowToPlay';
 
 interface UserProfile extends AppUser {
     balance: number;
@@ -87,18 +86,6 @@ const RockPaperScissorsGame: React.FC<RockPaperScissorsGameProps> = ({ userProfi
     
     return (
         <div className="flex flex-col items-center justify-around h-full p-4 relative">
-             <HowToPlay>
-                <p>1. حدد مبلغ الرهان.</p>
-                <p>2. اضغط على الرمز الذي تريد لعبه: <strong>حجر (✊)</strong>، <strong>ورقة (✋)</strong>، أو <strong>مقص (✌️)</strong>.</p>
-                <p>3. القواعد كالتالي:</p>
-                <ul className="list-disc list-inside pr-4">
-                    <li>الحجر يهزم المقص</li>
-                    <li>الورقة تهزم الحجر</li>
-                    <li>المقص يهزم الورقة</li>
-                </ul>
-                <p>4. إذا فزت، تربح ضعف رهانك. في حالة التعادل، يعود لك رهانك.</p>
-            </HowToPlay>
-
             <div className="w-full flex justify-around items-center my-8">
                 <div className="text-center">
                     <h3 className="text-2xl font-bold mb-2">أنت</h3>

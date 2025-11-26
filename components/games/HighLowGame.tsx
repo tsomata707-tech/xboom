@@ -5,7 +5,6 @@ import { useToast } from '../../AuthGate';
 import BetControls from '../BetControls';
 import Confetti from '../Confetti';
 import { formatNumber } from '../utils/formatNumber';
-import HowToPlay from '../HowToPlay';
 
 interface UserProfile extends AppUser {
     balance: number;
@@ -159,15 +158,6 @@ const HighLowGame: React.FC<HighLowGameProps> = ({ userProfile, onBalanceUpdate,
         <div className="flex flex-col items-center justify-around h-full p-4 relative">
             {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
             
-            <HowToPlay>
-                <p>1. ضع رهانك واضغط على "بدء اللعبة".</p>
-                <p>2. ستظهر لك بطاقة مكشوفة.</p>
-                <p>3. خمن ما إذا كانت البطاقة التالية ستكون <strong>أعلى (▲)</strong> أو <strong>أدنى (▼)</strong> في القيمة.</p>
-                <p>4. كلما زاد عدد التخمينات الصحيحة المتتالية، تضاعفت أرباحك.</p>
-                <p>5. يمكنك الضغط على "سحب الأرباح" في أي وقت للاحتفاظ بما كسبته.</p>
-                <p>6. إذا أخطأت في التخمين، تخسر كل شيء.</p>
-            </HowToPlay>
-
             <div className="flex items-center justify-center gap-4 sm:gap-8 my-4">
                 <CardComponent card={currentCard} isFlipped={!!currentCard} />
                 <span className="text-4xl font-bold text-gray-400">vs</span>

@@ -20,11 +20,10 @@ const gameNames: { [key: string]: string } = {
   findTheBox: 'اكتشف الصندوق',
   numberWheel: 'المربع الرابح',
   luckyWheel: 'عجلة الحظ',
-  treasureHunt: 'البحث عن الكنز',
+  treasureHunt: 'التفاحة',
   plinkoGame: 'لعبة بلينكو',
   numberGuess: 'خمن الرقم',
   gachaMachine: 'آلة الكبسولة',
-  xboomStockMarket: 'بورصة اكس بوم',
   sportsBetting: 'الرهانات الرياضية',
   snakesAndLadders: 'السلم والثعبان',
 };

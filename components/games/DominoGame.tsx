@@ -7,7 +7,6 @@ import Confetti from '../Confetti';
 import { formatNumber } from '../utils/formatNumber';
 import { useGameLoop } from '../hooks/useGameLoop';
 import GameTimerDisplay from '../GameTimerDisplay';
-import HowToPlay from '../HowToPlay';
 
 interface UserProfile extends AppUser {
     balance: number;
@@ -303,14 +302,6 @@ const DominoGame: React.FC<DominoGameProps> = ({ userProfile, onBalanceUpdate, o
         <div className="flex flex-col h-full w-full relative overflow-hidden">
             {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
             
-            <HowToPlay>
-                <p>1. حدد مبلغ الرهان.</p>
-                <p>2. انتظر توزيع أوراق الدومينو (7 لك و 7 للخصم).</p>
-                <p>3. اختر ورقة من يدك (يفضل ذات المجموع العالي).</p>
-                <p>4. سيختار الخصم ورقة من يده.</p>
-                <p>5. صاحب المجموع الأعلى يربح الجولة (x2).</p>
-            </HowToPlay>
-
             {/* Game Area */}
             <div className="flex-grow flex flex-col justify-between items-center py-2 relative z-10 w-full max-w-2xl mx-auto">
                 

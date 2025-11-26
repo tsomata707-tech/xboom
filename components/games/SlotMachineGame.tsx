@@ -5,7 +5,6 @@ import { useToast } from '../../AuthGate';
 import BetControls from '../BetControls';
 import Confetti from '../Confetti';
 import { formatNumber } from '../utils/formatNumber';
-import HowToPlay from '../HowToPlay';
 
 interface UserProfile extends AppUser {
     balance: number;
@@ -111,13 +110,6 @@ const SlotMachineGame: React.FC<SlotMachineGameProps> = ({ userProfile, onBalanc
         <div className="flex flex-col items-center justify-around h-full p-4 relative">
              {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
              
-             <HowToPlay>
-                <p>1. حدد مبلغ رهانك من لوحة التحكم.</p>
-                <p>2. اضغط على زر <strong>"لــف!"</strong> لتدوير العجلات.</p>
-                <p>3. انتظر توقف العجلات. إذا تطابقت 3 رموز في خط الوسط، تفوز!</p>
-                <p>4. الجوائز تختلف حسب الرموز (الجرس، الجواهر، رقم 7 هو الأعلى).</p>
-            </HowToPlay>
-
             <div className="p-4 sm:p-6 bg-gray-800 rounded-2xl border-4 border-yellow-500 shadow-lg shadow-yellow-800/40">
                 <div className="flex justify-center items-center gap-4 sm:gap-6 relative">
                     <Reel symbols={SYMBOLS} finalSymbol={reels[0]} spinning={spinning} />

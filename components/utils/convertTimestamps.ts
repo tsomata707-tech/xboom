@@ -1,47 +1,62 @@
 
-// Utility to convert Firestore Timestamps and JS Dates to numbers for JSON-serializable state
-// Includes strict cycle detection and prototype checking to prevent "Converting circular structure to JSON" errors
-export const convertTimestamps = (data: any, visited = new WeakSet()): any => {
-    // Handles null, undefined, primitives
-    if (!data || typeof data !== 'object') {
+import { Timestamp } from 'firebase/firestore';
+
+export const convertTimestamps = (data: any, seen = new WeakSet<object>()): any => {
+    // 1. Handle primitives
+    if (data === null || data === undefined || typeof data !== 'object') {
         return data;
     }
 
-    // Detect circular references
-    if (visited.has(data)) {
-        return null; 
+    // 2. Prevent Circular References
+    if (seen.has(data)) {
+        return null;
     }
-    visited.add(data);
+    seen.add(data);
 
-    // Firestore Timestamps (from server) have a toMillis method.
+    // 3. Handle Firestore Timestamp
+    // Check for toMillis function
     if (typeof data.toMillis === 'function') {
         return data.toMillis();
     }
+    // Check for seconds/nanoseconds properties (duck typing)
+    if ('seconds' in data && 'nanoseconds' in data) {
+        try {
+            return new Timestamp(data.seconds, data.nanoseconds).toMillis();
+        } catch (e) {
+            return Date.now();
+        }
+    }
 
-    // JavaScript Date objects.
+    // 4. Handle standard Date objects
     if (data instanceof Date) {
         return data.getTime();
     }
 
-    // Arrays: recurse on each element.
+    // 5. Handle Arrays recursively
     if (Array.isArray(data)) {
-        return data.map(item => convertTimestamps(item, visited));
+        return data.map(item => convertTimestamps(item, seen));
     }
-    
-    // Handle plain objects strictly.
-    // This check (!proto || proto === Object.prototype) ensures we don't traverse 
-    // complex class instances (like Firestore DocumentReference or Snapshot) 
-    // which are the usual cause of circular JSON errors.
-    const proto = Object.getPrototypeOf(data);
-    if (!proto || proto === Object.prototype) {
-        const res: { [key: string]: any } = {};
-        for (const key of Object.keys(data)) {
-            res[key] = convertTimestamps(data[key], visited);
+
+    // 6. Handle React Internals or DOM Nodes (Safety check)
+    if (data['$$typeof'] || data.nodeType || data._owner) {
+        return null;
+    }
+
+    // 7. Handle Objects recursively
+    // We create a new plain object to strip prototype chains and internal SDK circular references
+    const result: { [key: string]: any } = {};
+    for (const key in data) {
+        // Skip internal Firebase/SDK keys that often cause circular issues
+        if (key.startsWith('__') || key === 'auth' || key === 'firestore' || key === 'storage' || key === 'app' || key === 'database') continue;
+        
+        try {
+            // Only copy own properties to avoid prototype pollution and getters
+            if (Object.prototype.hasOwnProperty.call(data, key)) {
+                result[key] = convertTimestamps(data[key], seen);
+            }
+        } catch (e) {
+            // Ignore properties that throw errors on access
         }
-        return res;
     }
-    
-    // For any other complex object (like FieldValue sentinels, DOM nodes, Firestore refs, etc.)
-    // return null to be safe and prevent crashes.
-    return null;
+    return result;
 };

@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 // تم دمج إعدادات Firebase الحقيقية
@@ -19,7 +19,14 @@ const app = initializeApp(firebaseConfig);
 
 // الحصول على مرجع لخدمة المصادقة
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// تهيئة Firestore مع تفعيل التخزين المؤقت (Persistence) لدعم وضع عدم الاتصال
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+});
+
 export const storage = getStorage(app);
 
 // --- وظيفة رفع الصور إلى Cloudinary ---

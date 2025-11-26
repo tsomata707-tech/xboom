@@ -1,143 +1,106 @@
 
-import React, { useState, useCallback, useMemo } from 'react';
-import type { AppUser, GameId } from '../../types';
+import React, { useState, useEffect } from 'react';
+import { doc, onSnapshot, runTransaction } from 'firebase/firestore';
+import { db } from '../../firebase';
+import type { AppUser, GameId, GuessColorGameState } from '../../types';
 import { useToast } from '../../AuthGate';
-import Confetti from '../Confetti';
-import { formatNumber } from '../utils/formatNumber';
-import HowToPlay from '../HowToPlay';
-import { useGameLoop } from '../hooks/useGameLoop';
-import GameTimerDisplay from '../GameTimerDisplay';
 import BetControls from '../BetControls';
+import Confetti from '../Confetti';
+import { convertTimestamps } from '../utils/convertTimestamps';
 
-interface UserProfile extends AppUser {
-    balance: number;
-}
-
-interface GuessColorGameProps {
-    userProfile: UserProfile | null;
-    onBalanceUpdate: (amount: number, gameId: GameId) => Promise<boolean>;
-    onAnnounceWin: (nickname: string, amount: number, gameName: GameId) => void;
-}
+interface UserProfile extends AppUser { balance: number; }
+interface GuessColorGameProps { userProfile: UserProfile | null; onBalanceUpdate: (amount: number, gameId: GameId) => Promise<boolean>; onAnnounceWin: any; }
 
 const COLORS = [
-    { id: 'red', name: 'أحمر', bg: 'bg-red-600', hover: 'hover:bg-red-500', ring: 'ring-red-400' },
-    { id: 'green', name: 'أخضر', bg: 'bg-green-600', hover: 'hover:bg-green-500', ring: 'ring-green-400' },
-    { id: 'blue', name: 'أزرق', bg: 'bg-blue-600', hover: 'hover:bg-blue-500', ring: 'ring-blue-400' },
-    { id: 'yellow', name: 'أصفر', bg: 'bg-yellow-500', hover: 'hover:bg-yellow-400', ring: 'ring-yellow-300' },
+    { id: 'red', name: 'أحمر', bg: 'bg-red-600' },
+    { id: 'green', name: 'أخضر', bg: 'bg-green-600' },
+    { id: 'blue', name: 'أزرق', bg: 'bg-blue-600' },
+    { id: 'yellow', name: 'أصفر', bg: 'bg-yellow-500' },
 ];
-const MULTIPLIER = 4;
-const PREPARATION_TIME = 10;
-const GAME_TIME = 2; // Short time for revealing
-const RESULTS_TIME = 4;
 
-const GuessColorGame: React.FC<GuessColorGameProps> = ({ userProfile, onBalanceUpdate, onAnnounceWin }) => {
+const GuessColorGame: React.FC<GuessColorGameProps> = ({ userProfile, onBalanceUpdate }) => {
     const { addToast } = useToast();
+    const [gameState, setGameState] = useState<GuessColorGameState | null>(null);
     const [bet, setBet] = useState(100);
     const [selectedColor, setSelectedColor] = useState<string | null>(null);
-    const [winningColor, setWinningColor] = useState<string | null>(null);
-    const [winnings, setWinnings] = useState(0);
+    const [hasBet, setHasBet] = useState(false);
     const [showConfetti, setShowConfetti] = useState(false);
+    const [winMessage, setWinMessage] = useState('');
 
-    const handleRoundStart = async () => {
-        if (!selectedColor) return;
-        if (!userProfile || bet > userProfile.balance) {
-            addToast("رصيدك غير كافٍ لإتمام الرهان.", "error");
-            return;
-        }
+    useEffect(() => {
+        const unsub = onSnapshot(doc(db, 'public', 'guessColor'), (s) => {
+            if (s.exists()) {
+                const data = convertTimestamps(s.data()) as GuessColorGameState;
+                setGameState(data);
+                if (data.status === 'betting') {
+                    setHasBet(false);
+                    setSelectedColor(null);
+                    setWinMessage('');
+                    setShowConfetti(false);
+                } else if (data.status === 'result') {
+                    if (hasBet && selectedColor === data.result) {
+                        setWinMessage('إجابة صحيحة! 🎉');
+                        setShowConfetti(true);
+                    } else if (hasBet) {
+                        setWinMessage('إجابة خاطئة.');
+                    }
+                }
+            }
+        });
+        return () => unsub();
+    }, [hasBet, selectedColor]);
 
+    const handleBet = async () => {
+        if (!selectedColor || !userProfile || gameState?.status !== 'betting') return;
         const success = await onBalanceUpdate(-bet, 'guessColor');
-        if (!success) return;
-
-        const winner = COLORS[Math.floor(Math.random() * COLORS.length)].id;
-        setWinningColor(winner);
-
-        let winAmount = 0;
-        if (winner === selectedColor) {
-            winAmount = bet * MULTIPLIER;
-        }
-        
-        setWinnings(winAmount);
-
-        if (winAmount > 0) {
-            onBalanceUpdate(winAmount, 'guessColor');
-            addToast(`لقد ربحت ${formatNumber(winAmount)} 💎!`, 'success');
-            if (winAmount > 10000 && userProfile.displayName) {
-                onAnnounceWin(userProfile.displayName, winAmount, 'guessColor');
-            }
-            if (winAmount > bet * 5) {
-                setShowConfetti(true);
-            }
+        if (success) {
+            setHasBet(true);
+            await runTransaction(db, async (t) => {
+                const ref = doc(db, 'public', 'guessColor');
+                const docSnap = await t.get(ref);
+                const current = docSnap.data() as GuessColorGameState;
+                const bets = current.bets || {};
+                bets[userProfile.uid] = { userId: userProfile.uid, nickname: userProfile.displayName || 'P', amount: bet, choice: selectedColor, timestamp: Date.now(), avatar: '' };
+                t.update(ref, { bets });
+            });
+            addToast('تم الرهان!', 'success');
         }
     };
 
-    const resetGame = useCallback(() => {
-        setSelectedColor(null);
-        setWinningColor(null);
-        setWinnings(0);
-    }, []);
-
-    const { phase, timeRemaining, totalTime } = useGameLoop({
-        onRoundStart: handleRoundStart,
-        onRoundEnd: resetGame,
-    }, {
-        preparationTime: PREPARATION_TIME,
-        gameTime: GAME_TIME,
-        resultsTime: RESULTS_TIME,
-    });
-
-    const controlsDisabled = phase !== 'preparing';
-
     return (
-        <div className="flex flex-col items-center justify-between h-full p-4 relative">
-             {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
-             
-             <HowToPlay>
-                <p>1. قم بتحديد قيمة الرهان.</p>
-                <p>2. اختر لوناً واحداً من الألوان الأربعة (أحمر، أخضر، أزرق، أصفر).</p>
-                <p>3. انتظر انتهاء المؤقت.</p>
-                <p>4. سيتم اختيار لون عشوائي. إذا تطابق مع اختيارك، تربح 4 أضعاف رهانك (x4)!</p>
-            </HowToPlay>
-
-             <GameTimerDisplay phase={phase} timeRemaining={timeRemaining} totalTime={totalTime} />
-
-            <div className="flex-grow w-full flex items-center justify-center">
-                <div className="grid grid-cols-2 gap-4 w-full max-w-md">
-                {COLORS.map(color => {
-                    const isWinner = winningColor === color.id;
-                    const isSelected = selectedColor === color.id;
-                    return (
-                        <div key={color.id} className="relative aspect-square">
-                            <button
-                                onClick={() => setSelectedColor(color.id)}
-                                disabled={controlsDisabled}
-                                className={`w-full h-full rounded-2xl flex items-center justify-center text-white text-2xl sm:text-3xl font-bold transition-all duration-300 transform 
-                                ${color.bg} ${!controlsDisabled ? color.hover + ' hover:scale-105' : ''} 
-                                ${isSelected && !controlsDisabled ? 'ring-4 ring-offset-2 ring-offset-gray-800 ' + color.ring : ''}
-                                disabled:opacity-50
-                                ${phase === 'results' && !isWinner ? 'opacity-30' : ''}
-                                ${isWinner ? `scale-110 ring-4 ring-offset-2 ring-offset-gray-800 ${color.ring} shadow-2xl` : ''}`}
-                            >
-                                {color.name}
-                            </button>
-                        </div>
-                    );
-                })}
-                </div>
-            </div>
+        <div className="flex flex-col items-center justify-between h-full p-4">
+            {showConfetti && <Confetti onComplete={() => setShowConfetti(false)} />}
             
-            <div className="h-8 text-xl font-bold text-center mt-6 game-container-animation">
-                {phase === 'results' && winnings > 0 && <span className="text-green-400">🎉 لقد ربحت {formatNumber(winnings)} 💎!</span>}
-                {phase === 'results' && winnings === 0 && <span className="text-red-500">حظ أفضل في المرة القادمة!</span>}
+            <div className="text-center mt-4">
+                <h2 className="text-xl font-bold text-white">
+                    {gameState?.status === 'betting' ? 'اختر اللون الرابح' : gameState?.status === 'revealing' ? 'جاري الكشف...' : 'النتيجة'}
+                </h2>
+                {gameState?.result && gameState.status === 'result' && (
+                    <div className={`mt-2 text-2xl font-black uppercase ${gameState.result === 'red' ? 'text-red-500' : gameState.result === 'green' ? 'text-green-500' : gameState.result === 'blue' ? 'text-blue-500' : 'text-yellow-500'}`}>
+                        {COLORS.find(c => c.id === gameState.result)?.name}
+                    </div>
+                )}
+                <div className="text-lg text-yellow-300">{winMessage}</div>
             </div>
 
-            <BetControls
-                bet={bet}
-                setBet={setBet}
-                balance={userProfile?.balance ?? 0}
-                disabled={controlsDisabled}
-            />
+            <div className="grid grid-cols-2 gap-4 w-full max-w-md my-4">
+                {COLORS.map(color => (
+                    <button
+                        key={color.id}
+                        onClick={() => setSelectedColor(color.id)}
+                        disabled={gameState?.status !== 'betting' || hasBet}
+                        className={`h-24 rounded-xl shadow-lg transition-transform ${color.bg} ${selectedColor === color.id ? 'scale-105 ring-4 ring-white' : 'opacity-80'} disabled:opacity-50`}
+                    >
+                        <span className="text-xl font-bold text-white drop-shadow-md">{color.name}</span>
+                    </button>
+                ))}
+            </div>
+
+            <div className="w-full max-w-sm">
+                <BetControls bet={bet} setBet={setBet} balance={userProfile?.balance ?? 0} disabled={gameState?.status !== 'betting' || hasBet} />
+                <button onClick={handleBet} disabled={gameState?.status !== 'betting' || hasBet || !selectedColor} className="w-full py-3 mt-4 bg-purple-600 text-white rounded-xl font-bold disabled:bg-gray-600">تأكيد الرهان</button>
+            </div>
         </div>
     );
 };
-
 export default GuessColorGame;

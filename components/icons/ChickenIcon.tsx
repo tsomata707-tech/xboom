@@ -6,6 +6,6 @@ const ChickenIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
             🐔
         </text>
     </svg>
-);
+));
 
 export default ChickenIcon;
