@@ -3,7 +3,6 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import DiamondIcon from './icons/DiamondIcon';
 import type { TransactionRequest, SystemNotification, ProfitLogEntry } from '../types';
 import { useToast } from '../AuthGate';
-import { db, storage, uploadImage } from '../firebase';
 import { collection, query, where, getDocs, limit, setDoc, doc, Timestamp, runTransaction, getDoc, serverTimestamp } from 'firebase/firestore';
 import UploadIcon from './icons/UploadIcon';
 import { convertTimestamps } from './utils/convertTimestamps';
