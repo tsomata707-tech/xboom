@@ -1,7 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useReducer, useRef } from 'react';
 import { doc, onSnapshot, updateDoc, increment, setDoc, collection, query, where, orderBy, limit, serverTimestamp, getDoc, getDocs, writeBatch, addDoc, getCountFromServer, Timestamp, runTransaction } from 'firebase/firestore';
-import { db } from './firebase';
 import type { AppUser, GameId, TransactionRequest, SystemNotification, ProfitLogEntry, HighValueWin, CoinFlipGameState, CoinFlipBet, CrashGameState, LuckyWheelGameState, DiceRollGameState, GuessColorGameState, CardDrawGameState, NumberGuessGameState, GreedyGameState, TimeBombState, TheMazeGameState } from './types';
 import { formatNumber } from './components/utils/formatNumber';
 import { convertTimestamps } from './components/utils/convertTimestamps';
