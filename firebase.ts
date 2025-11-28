@@ -1,16 +1,15 @@
-// Mock Firebase - تم التحويل لبديل مجاني
-export const db = {
-  // سيتم استبدالها بـ PocketBase لاحقاً
-};
+import PocketBase from 'pocketbase';
 
-export const auth = {
-  // سيتم استبدالها بـ PocketBase لاحقاً  
-};
+const pb = new PocketBase('http://127.0.0.1:8090');
 
-export const storage = {
-  // سيتم استبدالها بـ PocketBase لاحقاً
-};
+export const db = pb;
+export const auth = pb.auth;
+export const storage = pb.files;
 
 export const uploadImage = async (file: File): Promise<string> => {
-  return "https://example.com/image.jpg"; // قيمة مؤقتة
+  const formData = new FormData();
+  formData.append('image', file);
+  
+  const record = await pb.collection('images').create(formData);
+  return pb.files.getUrl(record, record.image);
 };
